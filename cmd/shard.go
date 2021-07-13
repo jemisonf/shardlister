@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
 	"github.com/spf13/cobra"
 )
 
@@ -52,14 +53,14 @@ func shardApps(cmd *cobra.Command, args []string) {
 
 	apps, err := globals.lister.ListShardApps(context.Background(), globals.numShards, shard)
 
+	shardApps := map[int][]v1alpha1.Application{
+		shard: apps,
+	}
+
 	if shardAppsOpts.count {
-		cmd.Printf("number of apps for shard %d: %d\n", shard, len(apps))
-		os.Exit(0)
+		printShardAppsCount(cmd, globals.numShards, shardApps)
+		return
 	}
 
-	cmd.Printf("shard %d\n", shard)
-
-	for _, app := range apps {
-		cmd.Printf("%s\t%s\n", app.ClusterName, app.Name)
-	}
+	printShardApps(cmd, globals.numShards, shardApps)
 }

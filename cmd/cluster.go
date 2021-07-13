@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 )
@@ -34,7 +35,7 @@ var clusterAppsCmd = &cobra.Command{
 
 func clusterApps(cmd *cobra.Command, args []string) {
 	clusterName := args[0]
-	clusterApps, err := globals.lister.ListClusterApps(context.Background(), clusterName)
+	clusterApps, err := globals.lister.ListClusterApps(context.Background(), globals.numShards, clusterName)
 
 	if err != nil {
 		cmd.PrintErrf("error getting apps: %v\n", err)
@@ -42,14 +43,17 @@ func clusterApps(cmd *cobra.Command, args []string) {
 	}
 
 	if clusterAppsOpts.count {
-		cmd.Printf("number of apps for cluster %s: %d\n", clusterName, len(clusterApps))
+		formatString := "%-20%-8s\n"
+		cmd.Printf(formatString, "CLUSTER", "APP COUNT")
+		cmd.Printf(formatString, clusterName, strconv.Itoa(len(clusterApps)))
 		os.Exit(0)
 	}
 
-	cmd.Printf("cluster %s\n", clusterName)
+	formatString := "%-64s%-20s%s"
+	cmd.Printf(formatString, "APP NAME", "CLUSTER NAME", "CLUSTER SERVER\n")
 
 	for _, app := range clusterApps {
-		cmd.Printf("%s\t%s\n", app.ClusterName, app.Name)
+		cmd.Printf(formatString, app.ObjectMeta.Name, app.Spec.Destination.Name, app.Spec.Destination.Server)
 	}
 
 }

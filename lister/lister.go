@@ -9,6 +9,7 @@ import (
 	"github.com/argoproj/argo-cd/controller/sharding"
 	argocdclient "github.com/argoproj/argo-cd/pkg/apiclient"
 	"github.com/argoproj/argo-cd/pkg/apiclient/application"
+	"github.com/argoproj/argo-cd/pkg/apiclient/cluster"
 	"github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
 	"github.com/argoproj/argo-cd/util/db"
 	"github.com/argoproj/argo-cd/util/settings"
@@ -19,9 +20,10 @@ import (
 )
 
 type Lister struct {
-	db        db.ArgoDB
-	appClient application.ApplicationServiceClient
-	cache     cache.Cache
+	db            db.ArgoDB
+	appClient     application.ApplicationServiceClient
+	cache         cache.Cache
+	clusterClient cluster.ClusterServiceClient
 }
 
 func NewLister(ctx context.Context, namespace string, kubeconfigPath string, argoCDConfigPath string) (*Lister, error) {
@@ -46,24 +48,41 @@ func NewLister(ctx context.Context, namespace string, kubeconfigPath string, arg
 
 	argoCDClient := argocdclient.NewClientOrDie(&argocdclient.ClientOptions{GRPCWeb: true, ConfigPath: argoCDConfigPath})
 	_, appClient := argoCDClient.NewApplicationClientOrDie()
+	_, clusterClient := argoCDClient.NewClusterClientOrDie()
 
-	l := Lister{db: argoDB, appClient: appClient, cache: *cache}
+	l := Lister{db: argoDB, appClient: appClient, cache: *cache, clusterClient: clusterClient}
 
 	return &l, nil
 }
 
-func (l *Lister) ListClusters(ctx context.Context) ([]v1alpha1.Cluster, error) {
-	clusterList, err := l.db.ListClusters(ctx)
+func (l *Lister) ListClusters(ctx context.Context, replicas int) ([]v1alpha1.Cluster, error) {
+	// clusterClient gets the list of clusters from the ArgoCD API and gives you the cached app count,
+	// while db.ListClusters gets the cluster secret and gives you the ID and the shard.
+	clusterList, err := l.clusterClient.List(ctx, &cluster.ClusterQuery{})
+	dbClusterList, err := l.db.ListClusters(ctx)
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error listing clusters: %v", err)
 	}
 
-	return clusterList.Items, nil
+	clusters := []v1alpha1.Cluster{}
+
+	for _, cluster := range clusterList.Items {
+		// find matching cluster in dbClusterList
+		for _, dbCluster := range dbClusterList.Items {
+			if dbCluster.Name == cluster.Name && dbCluster.Server == cluster.Server {
+				cluster.Shard = dbCluster.Shard
+				cluster.ID = dbCluster.ID
+			}
+		}
+		clusters = append(clusters, cluster)
+	}
+
+	return clusters, nil
 }
 
 func (l *Lister) ListShardClusters(ctx context.Context, replicas int, shard int) ([]v1alpha1.Cluster, error) {
-	clusters, err := l.ListClusters(ctx)
+	clusters, err := l.ListClusters(ctx, replicas)
 
 	if err != nil {
 		return nil, err
@@ -87,7 +106,7 @@ func (l *Lister) appsFromCache(ctx context.Context) (*v1alpha1.ApplicationList, 
 		return list.(*v1alpha1.ApplicationList), nil
 	}
 
-	log.Infof("getting clusters from API")
+	log.Infof("getting apps from API")
 	apps, err := l.appClient.List(ctx, &application.ApplicationQuery{})
 
 	if err != nil {
@@ -125,8 +144,8 @@ func (l *Lister) ListShardApps(ctx context.Context, replicas int, shard int) ([]
 	return shardApps, nil
 }
 
-func (l *Lister) ListClusterApps(ctx context.Context, clusterName string) ([]v1alpha1.Application, error) {
-	clusters, err := l.ListClusters(ctx)
+func (l *Lister) ListClusterApps(ctx context.Context, replicas int, clusterName string) ([]v1alpha1.Application, error) {
+	clusters, err := l.ListClusters(ctx, replicas)
 
 	if err != nil {
 		return nil, fmt.Errorf("error getting clusters: %v", err)

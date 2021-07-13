@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"strconv"
 
 	"github.com/argoproj/argo-cd/pkg/apis/application/v1alpha1"
 	"github.com/spf13/cobra"
-	"github.com/jemisonf/shardlister/lister"
+	"source.datanerd.us/vind-playground/shardlister/lister"
 )
 
 type globalOpts struct {
@@ -34,10 +35,23 @@ func Execute() error {
 }
 
 func printShard(cmd *cobra.Command, shard int, clusters []v1alpha1.Cluster) {
-	cmd.Printf("shard %d:\n", shard)
+	formatString := "%-8s%-30s%-8s\n"
+	cmd.Printf(formatString, "SHARD", "CLUSTER", "CACHED APP COUNT")
 	for _, cluster := range clusters {
-		cmd.Printf("\t%s\n", cluster.Name)
+		cmd.Printf(formatString, strconv.Itoa(shard), cluster.Name, strconv.Itoa(int(cluster.Info.ApplicationsCount)))
 	}
+}
+
+func printShards(cmd *cobra.Command, shards int, shardClusters map[int][]v1alpha1.Cluster) {
+	formatString := "%-8s%-30s%-8s\n"
+	cmd.Printf(formatString, "SHARD", "CLUSTER", "CACHED APP COUNT")
+	for shard := 0; shard < shards; shard++ {
+		clusters := shardClusters[shard]
+		for _, cluster := range clusters {
+			cmd.Printf(formatString, strconv.Itoa(shard), cluster.Name, strconv.Itoa(int(cluster.Info.ApplicationsCount)))
+		}
+	}
+
 }
 
 func listAll(cmd *cobra.Command, args []string) {
@@ -46,6 +60,7 @@ func listAll(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	shardClusters := map[int][]v1alpha1.Cluster{}
 	for i := 0; i < globals.numShards; i++ {
 		clusters, err := globals.lister.ListShardClusters(context.Background(), globals.numShards, i)
 
@@ -53,8 +68,10 @@ func listAll(cmd *cobra.Command, args []string) {
 			cmd.PrintErrf("error listing clusters for shard %d: %v", i, err)
 		}
 
-		printShard(cmd, i, clusters)
+		shardClusters[i] = clusters
 	}
+
+	printShards(cmd, globals.numShards, shardClusters)
 }
 
 func init() {
